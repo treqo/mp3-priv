@@ -1,5 +1,6 @@
 package timedelayqueue;
 
+import javax.annotation.concurrent.ThreadSafe;
 import java.util.*;
 import java.lang.*;
 import java.util.UUID;
@@ -49,6 +50,8 @@ public class TimeDelayQueue {
     private PriorityQueue<PubSubMessage> pq;
     private int delay;
     private int count = 0;
+    private List<Long> operations = new ArrayList<>();
+
 
     MsgThread msgThread;
 
@@ -73,11 +76,12 @@ public class TimeDelayQueue {
     // add a message to the TimeDelayQueue
     // if a message with the same id exists then
     // return false
-    public boolean add(PubSubMessage msg) {
+    public synchronized boolean add(PubSubMessage msg) {
         if(!pq.stream()
                 .map(PubSubMessage::getId)
                 .anyMatch(uuid -> uuid == msg.getId())) {
             count++;
+            operations.add(System.currentTimeMillis());
             return pq.add(msg);
         }
 
@@ -95,11 +99,13 @@ public class TimeDelayQueue {
 
     // return the next message and PubSubMessage.NO_MSG
     // if there is ni suitable message
-    public PubSubMessage getNext() {
+    public synchronized PubSubMessage getNext() {
 
-        if(msgThread.runTime() >= delay) {
+        if(msgThread.runTime() >= delay && msgThread.isContinuing()) {
+            operations.add(System.currentTimeMillis());
             return pq.poll();
         }
+        operations.add(System.currentTimeMillis());
         return PubSubMessage.NO_MSG;
     }
 
@@ -107,8 +113,19 @@ public class TimeDelayQueue {
     // performed on this TimeDelayQueue over
     // any window of length timeWindow
     // the operations of interest are add and getNext
-    public int getPeakLoad(int timeWindow) {
-        return -1;
+    public synchronized int getPeakLoad(int timeWindow) {
+        int peak = 0;
+        for(int i = 0; i < operations.size(); i++) {
+            int count = 0;
+            for(int j = 0; j < operations.size(); j++) {
+                if(Math.abs(operations.get(j) - operations.get(i)) < timeWindow) {
+                    count++;
+                }
+            }
+            if(count > peak) {
+                peak = count;
+            }
+        }
+        return peak;
     }
-
 }
