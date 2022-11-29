@@ -12,25 +12,33 @@ import java.util.UUID;
 // TODO: what is the thread safety argument?
 
 class MsgThread extends Thread {
-
     private final long start;
     private final long end;
 
+    private volatile boolean isRunning;
+
     public MsgThread() {
-        start = System.currentTimeMillis();
-        end = -1; //change later
+        this.start = System.currentTimeMillis();
+        this.end = Integer.MAX_VALUE;               //change later
+        this.isRunning = true;
     }
 
     public MsgThread(int msgLifetime) {
         long current = System.currentTimeMillis();
         this.start = current;
         this.end = current + msgLifetime;
+        this.isRunning = true;
     }
 
     @Override
     public void run()
     {
         System.out.println("Thread is running");
+        while(isRunning == true) {
+            if(System.currentTimeMillis() >= end) {
+                isRunning = false;
+            }
+        }
     }
 
     public long runTime() {
@@ -38,11 +46,12 @@ class MsgThread extends Thread {
     }
 
     public boolean isContinuing() {
-        if(System.currentTimeMillis() < end || end == -1) {
-            return true;
-        }
-        return false;
+        return isRunning;
     }
+}
+
+class TransMSG extends Thread {
+
 }
 
 public class TimeDelayQueue {
@@ -51,9 +60,9 @@ public class TimeDelayQueue {
     private int delay;
     private int count = 0;
     private List<Long> operations = new ArrayList<>();
-
-
     MsgThread msgThread;
+
+    private Map<TransientPubSubMessage, MsgThread> transientThreads = new HashMap<>();
 
     // a comparator to sort messages
     private class PubSubMessageComparator implements Comparator<PubSubMessage> {
@@ -80,6 +89,10 @@ public class TimeDelayQueue {
         if(!pq.stream()
                 .map(PubSubMessage::getId)
                 .anyMatch(uuid -> uuid == msg.getId())) {
+            if(msg.isTransient()) {
+                TransientPubSubMessage msgTrans = (TransientPubSubMessage) msg;
+                transientThreads.put(msgTrans, new MsgThread(msgTrans.getLifetime()));
+            }
             count++;
             operations.add(System.currentTimeMillis());
             return pq.add(msg);
@@ -100,8 +113,9 @@ public class TimeDelayQueue {
     // return the next message and PubSubMessage.NO_MSG
     // if there is ni suitable message
     public synchronized PubSubMessage getNext() {
-
-        if(msgThread.runTime() >= delay && msgThread.isContinuing()) {
+        while(pq.size() != 0) {
+        }
+        if(msgThread.runTime() >= delay) {
             operations.add(System.currentTimeMillis());
             return pq.poll();
         }
