@@ -4,6 +4,8 @@ import javax.annotation.concurrent.ThreadSafe;
 import java.util.*;
 import java.lang.*;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 // TODO: write a description for this class
 // TODO: complete all methods, irrespective of whether there is an explicit TODO or not
@@ -11,58 +13,14 @@ import java.util.UUID;
 // TODO: State the rep invariant and abstraction function
 // TODO: what is the thread safety argument?
 
-class MsgThread extends Thread {
-    private final long start;
-    private final long end;
-
-    private volatile boolean isRunning;
-
-    public MsgThread() {
-        this.start = System.currentTimeMillis();
-        this.end = Integer.MAX_VALUE;               //change later
-        this.isRunning = true;
-    }
-
-    public MsgThread(int msgLifetime) {
-        long current = System.currentTimeMillis();
-        this.start = current;
-        this.end = current + msgLifetime;
-        this.isRunning = true;
-    }
-
-    @Override
-    public void run()
-    {
-        System.out.println("Thread is running");
-        while(isRunning == true) {
-            if(System.currentTimeMillis() >= end) {
-                isRunning = false;
-            }
-        }
-    }
-
-    public long runTime() {
-        return System.currentTimeMillis() - start;
-    }
-
-    public boolean isContinuing() {
-        return isRunning;
-    }
-}
-
-class TransMSG extends Thread {
-
-}
-
 public class TimeDelayQueue {
 
     private PriorityQueue<PubSubMessage> pq;
     private int delay;
     private int count = 0;
     private List<Long> operations = new ArrayList<>();
-    MsgThread msgThread;
 
-    private Map<TransientPubSubMessage, MsgThread> transientThreads = new HashMap<>();
+    private Map<PubSubMessage, Long> transients = new HashMap<>();
 
     // a comparator to sort messages
     private class PubSubMessageComparator implements Comparator<PubSubMessage> {
@@ -78,8 +36,6 @@ public class TimeDelayQueue {
     public TimeDelayQueue(int delay) {
         this.delay = delay;
         this.pq = new PriorityQueue<>(new PubSubMessageComparator());
-        this.msgThread = new MsgThread();
-        msgThread.start();
     }
 
     // add a message to the TimeDelayQueue
@@ -91,7 +47,7 @@ public class TimeDelayQueue {
                 .anyMatch(uuid -> uuid == msg.getId())) {
             if(msg.isTransient()) {
                 TransientPubSubMessage msgTrans = (TransientPubSubMessage) msg;
-                transientThreads.put(msgTrans, new MsgThread(msgTrans.getLifetime()));
+                transients.put(msg, msgTrans.getLifetime() + System.currentTimeMillis());
             }
             count++;
             operations.add(System.currentTimeMillis());
@@ -113,13 +69,29 @@ public class TimeDelayQueue {
     // return the next message and PubSubMessage.NO_MSG
     // if there is ni suitable message
     public synchronized PubSubMessage getNext() {
-        while(pq.size() != 0) {
+        Long currentTime = System.currentTimeMillis();
+        List<PubSubMessage> removed = new ArrayList<>();
+        Map<PubSubMessage, Long> filtered = transients.entrySet().stream()
+                .filter(x -> {
+                    if(x.getValue() < currentTime) {
+                        removed.add(x.getKey());
+                        return true;
+                    }
+                    return false;
+                })
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        transients = filtered;
+        pq.removeAll(removed);
+
+        if(pq.size() != 0) {
+            PubSubMessage next = pq.poll();
+            if(currentTime - next.getTimestamp().getTime() >= delay) {
+                operations.add(currentTime);
+                return next;
+            }
         }
-        if(msgThread.runTime() >= delay) {
-            operations.add(System.currentTimeMillis());
-            return pq.poll();
-        }
-        operations.add(System.currentTimeMillis());
+        operations.add(currentTime);
         return PubSubMessage.NO_MSG;
     }
 
